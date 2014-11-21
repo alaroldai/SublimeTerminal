@@ -6,6 +6,9 @@ import sys
 import pty
 import functools
 import select
+import fcntl
+import termios
+import struct
 
 cmd_folder = os.path.realpath(os.path.dirname(os.path.abspath( __file__ )))
 if cmd_folder not in sys.path:
@@ -25,7 +28,6 @@ class PTY:
 		PTY.instances[viewid] = self
 
 	def update(self):
-		print('update called')
 		all_windows = sublime.windows()
 		views = []
 		[views.append(v) for w in all_windows for v in w.views() if v.id() == self.id]
@@ -54,6 +56,7 @@ class PTY:
 
 		os.close(self.fd)
 		os.kill(self.client_pid, 1)
+		del PTY.instances[self.id]
 
 class PTYInputEventListener(sublime_plugin.EventListener):
 	def on_modified(self, view):
@@ -63,8 +66,6 @@ class PTYInputEventListener(sublime_plugin.EventListener):
 			cmd = view.command_history(0)
 			chars = ''
 			if cmd[0] == 'insert':
-
-				
 				chars = bytes(view.command_history(0)[1]['characters'], 'UTF-8')
 			elif cmd[0] == 'left_delete':
 				chars = bytes(pyte.control.BS, 'UTF-8')
@@ -72,7 +73,7 @@ class PTYInputEventListener(sublime_plugin.EventListener):
 				os.write(fd, chars)
 			view.sel().clear()
 			x, y = term.screen.cursor.x, term.screen.cursor.y
-			cpos = sum([len(s) - 1 for s in term.screen.display[:y]]) + x
+			cpos = sum([len(s) for s in term.screen.display[:y]]) + x
 			view.sel().add(sublime.Region(cpos, cpos))
 		except KeyError:
 			pass
@@ -80,15 +81,15 @@ class PTYInputEventListener(sublime_plugin.EventListener):
 class SublimeTerminalRefreshView(sublime_plugin.TextCommand):
 	def run(self, edit):
 		term = PTY.instances[self.view.id()]
-		self.view.replace(edit, sublime.Region(0, self.view.size()), ''.join([l[:-1] for l in term.screen.display]))
+		self.view.replace(edit, sublime.Region(0, self.view.size()), '\n'.join([l[:-1] for l in term.screen.display]))
 
 class SublimeTerminalNewWindow(sublime_plugin.WindowCommand):
 	def run(self):
 		view = self.window.new_file()
 		view.settings().set('auto_indent', False)
 		print(view.settings().get('auto_indent'))
-		(w, h) = view.viewport_extent()
-		(w, h) = (floor(w / view.em_width()), floor(h / view.line_height()))
+		(wp, hp) = view.viewport_extent()
+		(w, h) = (floor(wp / view.em_width()), floor(hp / view.line_height()))
 
 		screen = pyte.Screen(w, h)
 		stream = pyte.streams.ByteStream()
@@ -100,6 +101,17 @@ class SublimeTerminalNewWindow(sublime_plugin.WindowCommand):
 		if pid == 0:
 			# Child process
 			# os.closerange(3, 128)
+			os.putenv('TERM', 'ansi')
+			winsize = struct.pack("HHHH", int(h), int(w), int(wp), int(hp))
+			fcntl.ioctl(0, termios.TIOCSWINSZ, winsize)
+			termios.tcsetattr(0, termios.TCSANOW, [
+				 termios.ICRNL | termios.IXON | termios.IXANY | termios.IMAXBEL | termios.BRKINT
+				,termios.OPOST | termios.ONLCR
+				,termios.CREAD | termios.CS8 | termios.HUPCL
+				,termios.ICANON | termios.ISIG | termios.IEXTEN | termios.ECHOE | termios.ECHOK | termios.ECHOKE | termios.ECHOCTL | termios.ECHO
+				,termios.B38400
+				,termios.B38400
+				,[b'\x04', b'\xff', b'\xff', b'\x7f', b'\x17', b'\x15', b'\x12', b'\x00', b'\x03', b'\x1c', b'\x1a', b'\x19', b'\x11', b'\x13', b'\x16', b'\x0f', b'\x01', b'\x00', b'\x14', b'\x00']])
 			os.execlp('/bin/bash', '/bin/bash')
 
 			print("Exec failed!")
