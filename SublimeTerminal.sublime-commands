@@ -1,0 +1,8 @@
+[
+	{"caption" : "SublimeTerminal: New Window",
+	 "command" : "sublime_terminal_new_window"
+	},
+	{"caption" : "SublimeTerminal: Refresh View",
+	 "command" : "sublime_terminal_refresh_view"
+	 }
+]
